@@ -1,1 +1,1 @@
-bible from https://github.com/aruljohn/Bible-kjv
+bible yanked from https://github.com/aruljohn/Bible-kjv
