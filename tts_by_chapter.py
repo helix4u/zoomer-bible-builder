@@ -78,6 +78,7 @@ def combine_chapter_text(book: str, chapter: int, parts: list[str]) -> str:
     return f"{header} {body}".strip()
 
 def tts_request(text: str, voice: str, speed: float, fmt: str, timeout_s: int = 600) -> bytes:
+    text = text.replace('*', '')
     payload = {
         "model": TTS_MODEL,
         "input": text,
