@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # zoomer_bible_builder.py
-# Build a "Zoomer" translation by walking KJV verse-by-verse using a local OpenAI-compatible API.
+# Build a "Zoomer" translation by walking KJV verse-by-verse using a local OpenAI-compatible API,
+# preserving a sliding chat history so the model varies phrasing across nearby verses.
 
 import argparse
 import json
@@ -21,7 +22,7 @@ DEFAULT_MODEL = "gemma-3-4b-it"
 
 PROGRESS_PATH = "progress_zoomer_bible.json"
 
-# Anti-echo stops… DO NOT include "\n" here or you’ll clip the content to just the reference.
+# Anti-echo stops... DO NOT include "\n" or you'll clip content.
 DEFAULT_STOPS = ["Reference:", "AI:", "---"]
 
 def graceful_exit(signum, frame):
@@ -57,7 +58,7 @@ def load_progress() -> int:
     except Exception:
         return 0
 
-# normalize curly quotes and em/en dashes to ASCII
+# normalize curly quotes and dashes to ASCII
 _ASCII_MAP = str.maketrans({
     "\u2018": "'", "\u2019": "'",
     "\u201C": '"', "\u201D": '"',
@@ -72,13 +73,10 @@ def sanitize_one_line(s: str) -> str:
         return ""
     s = normalize_ascii(s)
     s = s.replace("\r", " ").replace("\n", " ").strip()
-    # cut anything after '---'
-    s = re.sub(r'\s*---.*$', '', s)
-    # remove common scaffolding echoes
+    s = re.sub(r'\s*---.*$', '', s)                           # cut anything after '---'
     s = re.sub(r'^\s*(AI|Answer|Output)\s*:\s*', '', s, flags=re.I)
     s = re.sub(r'\s*Reference\s*:.*$', '', s, flags=re.I)
-    # restrict to basic glyphs
-    s = "".join(ch for ch in s if ord(ch) < 0x2500)
+    s = "".join(ch for ch in s if ord(ch) < 0x2500)           # conservative glyph filter
     return s.strip()
 
 def ref_string(book: str, chapter: int, verse: int) -> str:
@@ -87,6 +85,11 @@ def ref_string(book: str, chapter: int, verse: int) -> str:
 def make_user_prompt(book: str, chapter: int, verse: int, text: str) -> str:
     text = normalize_ascii(str(text))
     return f'Reference: {book} {chapter}:{verse}\nText: "{text}"'
+
+def parse_ref_from_output_line(line: str) -> Optional[str]:
+    # Expect prefix like: [Genesis 1:1]
+    m = re.match(r'^\[([^\]]+)\]', line.strip())
+    return m.group(1) if m else None
 
 def normalize_book_filename(book: str) -> str:
     fname = re.sub(r"[\\s'’:-]+", "", book)
@@ -164,13 +167,53 @@ def iter_book_verses(book_obj: dict) -> Iterator[Tuple[str, int, int, str]]:
             verse_i, vtext = _parse_verse_entry(vobj, book_name, chap_i)
             yield (book_name, chap_i, verse_i, vtext)
 
-def flatten_all_verses(books_list: List[str], repo_dir: Optional[str]) -> List[Dict]:
+def flatten_all_verses(books_list: List[str], repo_dir: Optional[str]) -> Tuple[List[Dict], Dict[str, str]]:
     out = []
+    ref_to_text: Dict[str, str] = {}
     for book in books_list:
         bjson = try_fetch_book_json(book, repo_dir)
         for book_name, chap_i, verse_i, vtext in iter_book_verses(bjson):
+            ref = f"{book_name} {chap_i}:{verse_i}"
             out.append({"book": book_name, "chapter": chap_i, "verse": verse_i, "text": vtext})
-    return out
+            ref_to_text[ref] = vtext
+    return out, ref_to_text
+
+# ---------- history helpers ----------
+def tail_lines(path: str, max_lines: int) -> List[str]:
+    if not os.path.exists(path) or max_lines <= 0:
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return [ln.rstrip("\r\n") for ln in lines[-max_lines:]]
+    except Exception:
+        return []
+
+def build_history_messages(out_path: str, ref_to_text: Dict[str, str], pairs: int) -> List[Dict[str, str]]:
+    """
+    Returns a list of messages like:
+      user:   Reference + Text (from original KJV)
+      assistant: [Book C:V] zoomer line
+    for the last `pairs` completed verses in the output file.
+    """
+    msgs: List[Dict[str, str]] = []
+    recent = tail_lines(out_path, pairs)
+    for line in recent:
+        ref = parse_ref_from_output_line(line)
+        if not ref:
+            continue
+        # Reconstruct the original "user" verse prompt from our corpus
+        kjv = ref_to_text.get(ref)
+        if not kjv:
+            continue
+        user_msg = f'Reference: {ref}\nText: "{normalize_ascii(kjv)}"'
+        # Assistant message is exactly the produced line
+        assist_msg = sanitize_one_line(line)
+        if not assist_msg:
+            continue
+        msgs.append({"role": "user", "content": user_msg})
+        msgs.append({"role": "assistant", "content": assist_msg})
+    return msgs
 
 # ---------- chat ----------
 def chat_once(
@@ -182,18 +225,21 @@ def chat_once(
     stream: bool = True,
     max_tokens: int = -1,
     stops: Optional[List[str]] = None,
+    history_messages: Optional[List[Dict[str, str]]] = None,
     extra_headers: Optional[Dict[str,str]] = None,
 ) -> str:
     headers = {"Content-Type": "application/json"}
     if extra_headers:
         headers.update(extra_headers)
 
+    messages = [{"role": "system", "content": system_prompt}]
+    if history_messages:
+        messages.extend(history_messages)
+    messages.append({"role": "user", "content": user_prompt})
+
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt},
-        ],
+        "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": stream
@@ -236,7 +282,6 @@ def chat_once(
 def postprocess_line(result: str, expected_prefix: str) -> str:
     if not result:
         return expected_prefix
-    # Prefer the first bracketed match
     m = re.search(r'\[' + re.escape(expected_prefix[1:-1]) + r'\][^\n\r]*', result)
     s = m.group(0) if m else result
     s = sanitize_one_line(s)
@@ -248,6 +293,10 @@ def postprocess_line(result: str, expected_prefix: str) -> str:
 def body_ok(line: str, expected_prefix: str, min_chars: int = 6) -> bool:
     body = line[len(expected_prefix):].strip()
     return len(body) >= min_chars
+
+def opening_ngram(s: str, n: int = 4) -> str:
+    toks = [t for t in re.split(r'\s+', s.strip()) if t]
+    return " ".join(toks[:n]).lower()
 
 # ---------- driver ----------
 def run(
@@ -262,6 +311,7 @@ def run(
     retries: int,
     stream: bool,
     repo_dir: Optional[str],
+    ctx_pairs: int,
 ):
     with open(system_prompt_path, "r", encoding="utf-8") as f:
         sys_prompt = f.read().strip()
@@ -271,7 +321,7 @@ def run(
     print(f"Books: {len(books_list)}")
 
     print("Flattening verses...")
-    verses = flatten_all_verses(books_list, repo_dir)
+    verses, ref_to_text = flatten_all_verses(books_list, repo_dir)
     total = len(verses)
     print(f"Total verses: {total}")
 
@@ -288,6 +338,9 @@ def run(
             v = verses[idx]
             book, chapter, verse, text = v["book"], int(v["chapter"]), int(v["verse"]), v["text"]
 
+            # Build sliding history from file + ref_to_text, limited to `ctx_pairs`
+            history = build_history_messages(out_txt, ref_to_text, ctx_pairs)
+
             user_prompt = make_user_prompt(book, chapter, verse, text)
             expected_prefix = f"[{ref_string(book, chapter, verse)}]"
 
@@ -303,25 +356,51 @@ def run(
                         temperature=temperature,
                         stream=stream,
                         max_tokens=-1,
-                        stops=DEFAULT_STOPS
+                        stops=DEFAULT_STOPS,
+                        history_messages=history
                     )
                     line = postprocess_line(raw, expected_prefix)
 
-                    # Fallback retry if body came back empty… try once with no stops and non-streaming
+                    # If body is empty or repeats the same opening as recent outputs, try one fallback
                     if not body_ok(line, expected_prefix):
+                        # fallback call: no stops, non-streaming
                         raw2 = chat_once(
                             api_base=api_base,
                             model=model,
                             system_prompt=sys_prompt,
                             user_prompt=user_prompt,
-                            temperature=max(0.8, temperature),
+                            temperature=max(0.9, temperature),
                             stream=False,
                             max_tokens=-1,
-                            stops=None
+                            stops=None,
+                            history_messages=history
                         )
                         line2 = postprocess_line(raw2, expected_prefix)
                         if body_ok(line2, expected_prefix):
                             line = line2
+
+                    # Lightweight anti-dup opener check vs history
+                    if history:
+                        recent_assistant_lines = [m["content"] for m in history if m["role"] == "assistant"]
+                        recent_starts = {opening_ngram(ln.split("]",1)[-1]) for ln in recent_assistant_lines}
+                        this_start = opening_ngram(line.split("]",1)[-1])
+                        if this_start in recent_starts:
+                            # Ask once more for variation with a tiny nudge: add a short "user" reminder to history
+                            nudge = {"role":"user","content":"Reminder: Vary your opening phrasing... avoid repeating recent openers."}
+                            raw3 = chat_once(
+                                api_base=api_base,
+                                model=model,
+                                system_prompt=sys_prompt,
+                                user_prompt=user_prompt,
+                                temperature=max(1.0, temperature),
+                                stream=False,
+                                max_tokens=-1,
+                                stops=None,
+                                history_messages=history + [nudge]
+                            )
+                            line3 = postprocess_line(raw3, expected_prefix)
+                            if body_ok(line3, expected_prefix):
+                                line = line3
 
                     outf.write(line + "\n")
                     outf.flush()
@@ -370,6 +449,7 @@ if __name__ == "__main__":
     p.add_argument("--retries", type=int, default=5, help="Max retries per verse.")
     p.add_argument("--no-stream", action="store_true", help="Disable streaming.")
     p.add_argument("--repo-dir", default=None, help="Optional path to a local clone of aruljohn/Bible-kjv to read JSON from.")
+    p.add_argument("--ctx-pairs", type=int, default=10, help="How many prior user/assistant pairs to include as chat history.")
     args = p.parse_args()
 
     run(
@@ -384,4 +464,5 @@ if __name__ == "__main__":
         retries=args.retries,
         stream=(not args.no_stream),
         repo_dir=args.repo_dir,
+        ctx_pairs=args.ctx_pairs,
     )
