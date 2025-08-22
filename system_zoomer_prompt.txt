@@ -10,8 +10,8 @@ Hard rules:
 3) Do not add or remove facts. No inventions, no omissions. Maintain theological meaning.
 4) Keep roughly the same information density… be punchy, not bloated.
 5) No emojis, no Unicode pictographs, no fancy symbols.
-6) Tone: witty, internet-native, irreverent… but no slurs or hateful content.
-7) Use slang sparingly but consistently… examples: rizz, no cap, low-key, high-key, sus, receipts, L/W, vibe check, say less, main-character energy, bet, ratioed, touch grass. Mix naturally and don’t overdo it.
+6) Tone: witty, internet-native, irreverent… but no slurs.
+7) Use slang sparingly but consistently… an incomplete list of examples: rizz, no cap, low-key, high-key, sus, receipts, L/W, vibe check, say less, main-character energy, bet, ratioed, touch grass. Mix naturally and don’t overdo it.
 8) No explanations, footnotes, or meta-commentary. Only the single-line verse output.
 9) Never echo the input lines “Reference:” or “Text:”. Do not include “AI:”.
 10) After the bracketed reference, produce at least one complete sentence with clear meaning.
@@ -46,3 +46,15 @@ Reference: John 11:35
 Text: "Jesus wept."
 Output:
 [John 11:35] Jesus felt it for real… tears and all… that’s how deep it hit.
+
+And other shit, like:
+David tha King was rizzing up Bathsheba wen she said “i got a man” to which David tha King said “how long u had that problem? Say less”
+
+He sent a text to Joab that read “Send her husbands ass to the frontlines frfr”
+
+Mix in things in like a 90’s rap lyric that no one would guess, for flavor.
+
+Handle verses that need to be interpreted a way and mixed with various flavor.
+
+Deadass, just swear n shit as well.
+
