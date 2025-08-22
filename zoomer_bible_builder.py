@@ -10,7 +10,8 @@ import re
 import sys
 import time
 import signal
-from typing import Dict, List, Iterator, Optional, Tuple
+import unicodedata
+from typing import Dict, List, Iterator, Optional, Tuple, Set
 
 import requests
 
@@ -31,6 +32,11 @@ def graceful_exit(signum, frame):
 
 signal.signal(signal.SIGINT, graceful_exit)
 signal.signal(signal.SIGTERM, graceful_exit)
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # ---------- util ----------
 def http_get_json(url: str, timeout: int = 60) -> any:
@@ -66,6 +72,7 @@ _ASCII_MAP = str.maketrans({
     "\u00A0": " ",
 })
 def normalize_ascii(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s)
     return s.translate(_ASCII_MAP)
 
 def sanitize_one_line(s: str) -> str:
@@ -294,9 +301,16 @@ def body_ok(line: str, expected_prefix: str, min_chars: int = 6) -> bool:
     body = line[len(expected_prefix):].strip()
     return len(body) >= min_chars
 
-def opening_ngram(s: str, n: int = 4) -> str:
-    toks = [t for t in re.split(r'\s+', s.strip()) if t]
-    return " ".join(toks[:n]).lower()
+def opening_ngram(s: str, n: int = 2) -> str:
+    """Return a lowercase n-gram of the opening tokens, stripping punctuation."""
+    toks: List[str] = []
+    for t in re.split(r"\s+", s.strip().lower()):
+        t = re.sub(r"^[^\w]+|[^\w]+$", "", t)
+        if t:
+            toks.append(t)
+        if len(toks) >= n:
+            break
+    return " ".join(toks)
 
 # ---------- driver ----------
 def run(
@@ -332,6 +346,13 @@ def run(
     print(f"Ending before index: {last}")
     print(f"Output file: {out_txt}")
     os.makedirs(os.path.dirname(os.path.abspath(out_txt)), exist_ok=True)
+    seen_starts: Set[str] = set()
+    if os.path.exists(out_txt):
+        with open(out_txt, "r", encoding="utf-8") as fprev:
+            for ln in fprev:
+                opener = opening_ngram(ln.split("]",1)[-1])
+                if opener:
+                    seen_starts.add(opener)
 
     with open(out_txt, "a", encoding="utf-8") as outf:
         while idx < last and idx < total:
@@ -359,6 +380,7 @@ def run(
                         stops=DEFAULT_STOPS,
                         history_messages=history
                     )
+                    raw_for_log = raw
                     line = postprocess_line(raw, expected_prefix)
 
                     # If body is empty or repeats the same opening as recent outputs, try one fallback
@@ -378,34 +400,39 @@ def run(
                         line2 = postprocess_line(raw2, expected_prefix)
                         if body_ok(line2, expected_prefix):
                             line = line2
+                            raw_for_log = raw2
 
-                    # Lightweight anti-dup opener check vs history
-                    if history:
-                        recent_assistant_lines = [m["content"] for m in history if m["role"] == "assistant"]
-                        recent_starts = {opening_ngram(ln.split("]",1)[-1]) for ln in recent_assistant_lines}
-                        this_start = opening_ngram(line.split("]",1)[-1])
-                        if this_start in recent_starts:
-                            # Ask once more for variation with a tiny nudge: add a short "user" reminder to history
-                            nudge = {"role":"user","content":"Reminder: Vary your opening phrasing... avoid repeating recent openers."}
-                            raw3 = chat_once(
-                                api_base=api_base,
-                                model=model,
-                                system_prompt=sys_prompt,
-                                user_prompt=user_prompt,
-                                temperature=max(1.0, temperature),
-                                stream=False,
-                                max_tokens=-1,
-                                stops=None,
-                                history_messages=history + [nudge]
-                            )
-                            line3 = postprocess_line(raw3, expected_prefix)
-                            if body_ok(line3, expected_prefix):
-                                line = line3
+                    # Lightweight anti-dup opener check vs history and all prior lines
+                    recent_assistant_lines = [m["content"] for m in history if m["role"] == "assistant"] if history else []
+                    recent_starts = {opening_ngram(ln.split("]",1)[-1]) for ln in recent_assistant_lines}
+                    this_start = opening_ngram(line.split("]",1)[-1])
+                    if this_start in recent_starts or this_start in seen_starts:
+                        # Ask once more for variation with a tiny nudge: add a short "user" reminder to history
+                        nudge = {"role":"user","content":"Reminder: Vary your opening phrasing... avoid repeating recent openers."}
+                        raw3 = chat_once(
+                            api_base=api_base,
+                            model=model,
+                            system_prompt=sys_prompt,
+                            user_prompt=user_prompt,
+                            temperature=max(1.0, temperature),
+                            stream=False,
+                            max_tokens=-1,
+                            stops=None,
+                            history_messages=history + [nudge]
+                        )
+                        line3 = postprocess_line(raw3, expected_prefix)
+                        if body_ok(line3, expected_prefix):
+                            line = line3
+                            raw_for_log = raw3
+                            this_start = opening_ngram(line.split("]",1)[-1])
 
                     outf.write(line + "\n")
                     outf.flush()
                     save_progress(idx + 1)
-                    preview = line[:120] + ("..." if len(line) > 120 else "")
+                    seen_starts.add(this_start)
+                    preview_src = normalize_ascii(raw_for_log or line)
+                    preview_src = preview_src.replace("\r", " ").replace("\n", " ").strip()
+                    preview = preview_src[:120] + ("..." if len(preview_src) > 120 else "")
                     print(f"{idx+1}/{total}: {preview}")
                     time.sleep(rate_limit_s)
                     break
