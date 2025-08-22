@@ -1,5 +1,7 @@
 bible yanked from https://github.com/aruljohn/Bible-kjv
 
+bom snagged from https://github.com/johngthecreator/Book_of_Mormon_Scriptures
+
 probably needs like 'pip install requests', idk.
 
 example usage:
