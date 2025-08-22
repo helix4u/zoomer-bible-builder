@@ -1,0 +1,20 @@
+[
+    {
+        "book": "John",
+        "chapter": 3,
+        "verse": 16,
+        "commentary": "This verse is often called 'the Gospel in a nutshell.' It summarizes the core message of Christianity: God's immense love for humanity, demonstrated through the sacrifice of His Son, Jesus. This sacrifice provides the path to eternal life for anyone who believes."
+    },
+    {
+        "book": "1 John",
+        "chapter": 1,
+        "verse": 9,
+        "commentary": "This verse speaks to the Christian concept of confession and forgiveness. It offers an assurance that admitting one's wrongdoings (sins) to God is met with divine faithfulness and justice, resulting in forgiveness and spiritual cleansing."
+    },
+    {
+        "book": "Proverbs",
+        "chapter": 4,
+        "verse": 23,
+        "commentary": "This proverb emphasizes the importance of safeguarding one's inner self—the 'heart,' which in this context means a person's thoughts, feelings, and will. It teaches that one's inner state is the source from which all actions and life circumstances flow."
+    }
+]
