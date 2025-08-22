@@ -378,7 +378,7 @@ def parse_index_arg(s: Optional[str]) -> Optional[int]:
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Build a Zoomer Book of Mormon using a local LLM.")
-    p.add_argument("--system-prompt", default="system_zoomer_bom_prompt.txt", help="Path to the system prompt file.")
+    p.add_argument("--system-prompt", default="system_zoomer_prompt.txt", help="Path to the system prompt file.")
     p.add_argument("--out", default=OUT_PATH_DEFAULT, help="Output file to append verses to.")
     p.add_argument("--api-base", default=DEFAULT_API_BASE, help="OpenAI-compatible chat completions endpoint.")
     p.add_argument("--model", default=DEFAULT_MODEL, help="Model name.")
