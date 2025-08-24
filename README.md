@@ -8,6 +8,14 @@ example usage:
 
 python zoomer_bible_builder.py --repo-dir .\Bible-kjv --model "gemma-3-4b-it" --no-stream --ctx-pairs 10
 
+pass an api key if your endpoint needs it:
+
+python zoomer_bible_builder.py --api-key YOUR_KEY_HERE
+
+or set API_KEY env var for either script:
+
+API_KEY=YOUR_KEY python zoomer_bom_builder.py --no-stream
+
 added tts by chapter for use with kokoro fastapi
 
 python tts_by_chapter.py zoomer_bible.txt --outdir D:\AITools\zoomer-bible-builder\bible_audio --voice "af_sky+af+af_nicole" --speed 1.75 --format mp3 --skip-existing
