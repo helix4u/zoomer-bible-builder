@@ -249,7 +249,6 @@ def run(
     out_txt: str,
     api_base: str,
     model: str,
-    api_key: Optional[str],
     start_index: Optional[int],
     end_index: Optional[int],
     temperature: float,
@@ -262,8 +261,6 @@ def run(
 ):
     with open(system_prompt_path, "r", encoding="utf-8") as f:
         sys_prompt = f.read().strip()
-
-    extra_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
     print("Loading JSON…")
     data = load_bom_json(bom_json_path, use_standard_works)
@@ -303,8 +300,7 @@ def run(
                         stream=stream,
                         max_tokens=-1,
                         stops=DEFAULT_STOPS,
-                        history_messages=history,
-                        extra_headers=extra_headers,
+                        history_messages=history
                     )
                     line = postprocess_line(raw, expected_prefix)
 
@@ -319,8 +315,7 @@ def run(
                             stream=False,
                             max_tokens=-1,
                             stops=None,
-                            history_messages=history,
-                            extra_headers=extra_headers,
+                            history_messages=history
                         )
                         line2 = postprocess_line(raw2, expected_prefix)
                         if body_ok(line2, expected_prefix):
@@ -342,8 +337,7 @@ def run(
                                 stream=False,
                                 max_tokens=-1,
                                 stops=None,
-                                history_messages=history + [nudge],
-                                extra_headers=extra_headers,
+                                history_messages=history + [nudge]
                             )
                             line3 = postprocess_line(raw3, expected_prefix)
                             if body_ok(line3, expected_prefix):
@@ -388,7 +382,6 @@ if __name__ == "__main__":
     p.add_argument("--out", default=OUT_PATH_DEFAULT, help="Output file to append verses to.")
     p.add_argument("--api-base", default=DEFAULT_API_BASE, help="OpenAI-compatible chat completions endpoint.")
     p.add_argument("--model", default=DEFAULT_MODEL, help="Model name.")
-    p.add_argument("--api-key", default=os.environ.get("API_KEY"), help="Optional API key for the endpoint.")
     p.add_argument("--start-index", type=parse_index_arg, default=None, help="Zero-based verse index to start from.")
     p.add_argument("--end-index", type=parse_index_arg, default=None, help="Stop before this zero-based index.")
     p.add_argument("--temperature", type=float, default=0.9, help="Sampling temperature.")
@@ -405,7 +398,6 @@ if __name__ == "__main__":
         out_txt=args.out,
         api_base=args.api_base,
         model=args.model,
-        api_key=args.api_key,
         start_index=args.start_index,
         end_index=args.end_index,
         temperature=args.temperature,
