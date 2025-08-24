@@ -18,4 +18,4 @@ zoomer bom is tougher to get to behave. need to fix the thing getting wonky with
 
 python zoomer_bom_builder.py --system-prompt system_zoomer_prompt.txt --bom-json .\Book_of_Mormon_Scriptures\book-of-mormon.json --model "qwen3-4b-instruct-2507" --no-stream --ctx-pairs 20
 
-
+added api key var so you can use hosted models
