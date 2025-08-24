@@ -5,6 +5,11 @@
 #
 # Defaults: pulls book-of-mormon.json if --bom-json not provided.
 # Keeps a sliding chat history of the last N verse pairs to reduce repetitive openings.
+#
+# Notes:
+# - Sends Authorization header if --api-key or API_KEY is provided (fixes 401).
+# - Omits max_tokens unless > 0 (some providers reject negative values).
+# - On HTTP errors, prints response body for easier debugging.
 
 import argparse
 import json
@@ -27,7 +32,7 @@ DEFAULT_MODEL = "gemma-3-4b-it"
 OUT_PATH_DEFAULT = "zoomer_bom.txt"
 PROGRESS_PATH = "progress_zoomer_bom.json"
 
-# Anti-echo stops (do NOT include "\n" or you’ll clip the content to the ref only)
+# Anti-echo stops (do NOT include "\n" or you will clip the content to the ref only)
 DEFAULT_STOPS = ["Reference:", "AI:", "---"]
 
 def graceful_exit(signum, frame):
@@ -138,7 +143,7 @@ def load_bom_json(path_or_flag: Optional[str], use_standard_works: bool) -> List
         data = http_get_json(url)
     if not isinstance(data, list):
         raise RuntimeError("Expected a JSON array of verse objects.")
-    # Minimal schema check per repo README (volume/book/chapter/verse fields). :contentReference[oaicite:1]{index=1}
+    # Minimal schema check per repo README (volume/book/chapter/verse fields).
     probe = data[0]
     required = {"book_title", "chapter_number", "verse_number", "scripture_text"}
     if not required.issubset(probe.keys()):
@@ -166,6 +171,7 @@ def chat_once(
     model: str,
     system_prompt: str,
     user_prompt: str,
+    api_key: Optional[str] = None,
     temperature: float = 0.9,
     stream: bool = True,
     max_tokens: int = -1,
@@ -174,6 +180,11 @@ def chat_once(
     extra_headers: Optional[Dict[str,str]] = None,
 ) -> str:
     headers = {"Content-Type": "application/json"}
+    # actually use the api_key
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        # some local/proxy servers accept either header name
+        headers.setdefault("X-API-Key", api_key)
     if extra_headers:
         headers.update(extra_headers)
 
@@ -186,9 +197,11 @@ def chat_once(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
         "stream": stream
     }
+    # only send max_tokens if it is a positive integer
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        payload["max_tokens"] = max_tokens
     if stops:
         payload["stop"] = stops
 
@@ -249,6 +262,7 @@ def run(
     out_txt: str,
     api_base: str,
     model: str,
+    api_key: Optional[str],
     start_index: Optional[int],
     end_index: Optional[int],
     temperature: float,
@@ -262,7 +276,7 @@ def run(
     with open(system_prompt_path, "r", encoding="utf-8") as f:
         sys_prompt = f.read().strip()
 
-    print("Loading JSON…")
+    print("Loading JSON...")
     data = load_bom_json(bom_json_path, use_standard_works)
     verses, ref_to_text = flatten_bom(data)
     total = len(verses)
@@ -294,6 +308,7 @@ def run(
                     raw = chat_once(
                         api_base=api_base,
                         model=model,
+                        api_key=api_key,
                         system_prompt=sys_prompt,
                         user_prompt=user_prompt,
                         temperature=temperature,
@@ -309,6 +324,7 @@ def run(
                         raw2 = chat_once(
                             api_base=api_base,
                             model=model,
+                            api_key=api_key,
                             system_prompt=sys_prompt,
                             user_prompt=user_prompt,
                             temperature=max(0.9, temperature),
@@ -331,6 +347,7 @@ def run(
                             raw3 = chat_once(
                                 api_base=api_base,
                                 model=model,
+                                api_key=api_key,
                                 system_prompt=sys_prompt,
                                 user_prompt=user_prompt,
                                 temperature=max(1.0, temperature),
@@ -351,8 +368,12 @@ def run(
                     time.sleep(rate_limit_s)
                     break
                 except requests.HTTPError as e:
-                    code = e.response.status_code if e.response is not None else "?"
+                    resp = e.response
+                    code = resp.status_code if resp is not None else "?"
+                    body = resp.text if resp is not None else ""
                     print(f"HTTP error {code} on verse {idx}... attempt {attempt}/{retries}")
+                    if body:
+                        print(body[:2000])
                 except requests.RequestException as e:
                     print(f"Network error on verse {idx}: {e}... attempt {attempt}/{retries}")
                 except Exception as e:
@@ -381,6 +402,7 @@ if __name__ == "__main__":
     p.add_argument("--system-prompt", default="system_zoomer_prompt.txt", help="Path to the system prompt file.")
     p.add_argument("--out", default=OUT_PATH_DEFAULT, help="Output file to append verses to.")
     p.add_argument("--api-base", default=DEFAULT_API_BASE, help="OpenAI-compatible chat completions endpoint.")
+    p.add_argument("--api-key", default=os.environ.get("API_KEY"), help="API key for the endpoint, defaults to API_KEY env var.")
     p.add_argument("--model", default=DEFAULT_MODEL, help="Model name.")
     p.add_argument("--start-index", type=parse_index_arg, default=None, help="Zero-based verse index to start from.")
     p.add_argument("--end-index", type=parse_index_arg, default=None, help="Stop before this zero-based index.")
@@ -398,6 +420,7 @@ if __name__ == "__main__":
         out_txt=args.out,
         api_base=args.api_base,
         model=args.model,
+        api_key=args.api_key,
         start_index=args.start_index,
         end_index=args.end_index,
         temperature=args.temperature,
